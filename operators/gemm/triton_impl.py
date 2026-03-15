@@ -12,8 +12,41 @@ except ImportError:
 BACKEND_NAME = "triton"
 
 
+def _is_fp8_dtype(dtype: torch.dtype) -> bool:
+    return "float8" in str(dtype)
+
+
 if triton is not None:
 
+    def _fp16_configs() -> list[triton.Config]:
+        return [
+            triton.Config({"BLOCK_M": 128, "BLOCK_N": 256, "BLOCK_K": 32, "GROUP_M": 8}, num_stages=3, num_warps=8),
+            triton.Config({"BLOCK_M": 256, "BLOCK_N": 128, "BLOCK_K": 32, "GROUP_M": 8}, num_stages=3, num_warps=8),
+            triton.Config({"BLOCK_M": 128, "BLOCK_N": 128, "BLOCK_K": 32, "GROUP_M": 8}, num_stages=4, num_warps=4),
+            triton.Config({"BLOCK_M": 128, "BLOCK_N": 64, "BLOCK_K": 32, "GROUP_M": 8}, num_stages=4, num_warps=4),
+            triton.Config({"BLOCK_M": 64, "BLOCK_N": 128, "BLOCK_K": 32, "GROUP_M": 8}, num_stages=4, num_warps=4),
+            triton.Config({"BLOCK_M": 128, "BLOCK_N": 128, "BLOCK_K": 64, "GROUP_M": 8}, num_stages=3, num_warps=8),
+        ]
+
+
+    def _fp8_configs() -> list[triton.Config]:
+        return [
+            triton.Config({"BLOCK_M": 128, "BLOCK_N": 256, "BLOCK_K": 128, "GROUP_M": 8}, num_stages=4, num_warps=8),
+            triton.Config({"BLOCK_M": 256, "BLOCK_N": 128, "BLOCK_K": 128, "GROUP_M": 8}, num_stages=4, num_warps=8),
+            triton.Config({"BLOCK_M": 128, "BLOCK_N": 128, "BLOCK_K": 128, "GROUP_M": 8}, num_stages=4, num_warps=8),
+            triton.Config({"BLOCK_M": 128, "BLOCK_N": 64, "BLOCK_K": 128, "GROUP_M": 8}, num_stages=5, num_warps=4),
+            triton.Config({"BLOCK_M": 64, "BLOCK_N": 128, "BLOCK_K": 128, "GROUP_M": 8}, num_stages=5, num_warps=4),
+        ]
+
+
+    def _select_configs(meta):
+        return _fp8_configs() if meta.get("FP8_OUTPUT", False) else _fp16_configs()
+
+
+    @triton.autotune(
+        configs=_fp16_configs() + _fp8_configs(),
+        key=["m", "n", "k", "FP8_OUTPUT", "B_TRANSPOSED"],
+    )
     @triton.jit
     def _matmul_kernel(
         a_ptr,
@@ -33,6 +66,7 @@ if triton is not None:
         BLOCK_K: tl.constexpr,
         GROUP_M: tl.constexpr,
         B_TRANSPOSED: tl.constexpr,
+        FP8_OUTPUT: tl.constexpr,
     ):
         pid = tl.program_id(axis=0)
         grid_m = tl.cdiv(m, BLOCK_M)
@@ -81,10 +115,6 @@ if triton is not None:
         tl.store(c_ptrs, c, mask=c_mask)
 
 
-def _is_fp8_dtype(dtype: torch.dtype) -> bool:
-    return "float8" in str(dtype)
-
-
 def is_available(inputs: dict[str, torch.Tensor] | None = None) -> tuple[bool, str]:
     if triton is None:
         return False, "Triton is not installed."
@@ -108,15 +138,9 @@ def run(inputs: dict[str, torch.Tensor]) -> torch.Tensor:
         raise TypeError("GEMM expects 2D inputs.")
 
     m, k = a.shape
-    if b_is_transposed:
-        n = b.shape[0]
-    else:
-        n = b.shape[1]
-
+    n = b.shape[0] if b_is_transposed else b.shape[1]
     c = torch.empty((m, n), device=a.device, dtype=torch.float16)
-    block_k = 128 if _is_fp8_dtype(a.dtype) else 32
-    num_warps = 8 if _is_fp8_dtype(a.dtype) else 4
-    num_stages = 4 if _is_fp8_dtype(a.dtype) else 3
+    fp8_output = _is_fp8_dtype(a.dtype)
 
     grid = lambda meta: (triton.cdiv(m, meta["BLOCK_M"]) * triton.cdiv(n, meta["BLOCK_N"]),)
     _matmul_kernel[grid](
@@ -132,15 +156,11 @@ def run(inputs: dict[str, torch.Tensor]) -> torch.Tensor:
         b.stride(1),
         c.stride(0),
         c.stride(1),
-        BLOCK_M=128,
-        BLOCK_N=128,
-        BLOCK_K=block_k,
-        GROUP_M=8,
         B_TRANSPOSED=b_is_transposed,
-        num_warps=num_warps,
-        num_stages=num_stages,
+        FP8_OUTPUT=fp8_output,
     )
-    if _is_fp8_dtype(a.dtype):
+
+    if fp8_output:
         scaled = c.float() * inputs["scale_a"] * inputs["scale_b"]
         return scaled.to(torch.float16)
     return c

@@ -4,6 +4,10 @@ import torch
 
 BACKEND_NAME = "cuda"
 
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
+torch.set_float32_matmul_precision("high")
+
 
 def _is_fp8_dtype(dtype: torch.dtype) -> bool:
     return "float8" in str(dtype)

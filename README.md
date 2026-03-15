@@ -35,6 +35,7 @@ Triton 作为一个基于 Python 的 GPU 编程语言与编译器，能够用较
 - 提供统一的 Benchmark 入口，可自动构造多组测试数据。
 - 支持对同一算子的不同实现进行耗时统计、TFLOPS 统计、正确性校验与画图。
 - 默认 `GEMM` Benchmark 会自动构造多组连续 sweep，用于生成更有信息量的性能曲线。
+- `Triton GEMM` 当前已经接入 autotune 配置搜索，用于在不同矩阵规模下自动选择更优的块划分参数。
 - Benchmark 输出结果保存在 `output/` 目录中。
 
 ## 项目结构
