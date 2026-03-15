@@ -86,7 +86,8 @@ EngineeringPractice/
 说明：
 
 - 这里的 `CUDA` 基线当前通过 PyTorch CUDA Kernel 进行封装，便于快速建立对照组。
-- 对于 `FP8 GEMM`，当前 `CUDA` 基线会将量化后的输入反量化回 `FP16` 后再执行 `torch.matmul`，用于提供统一的参考输出与对照结果。
+- 对于 `FP8 GEMM`，当前 `CUDA` 基线优先使用 PyTorch 原生的 `torch._scaled_mm` 路径，不再通过回退到 `FP16 matmul` 冒充 `FP8`。
+- 原生 `FP8 GEMM` 对硬件和软件有要求：通常需要 Hopper 及以上 GPU，且当前 PyTorch 构建需要提供 `_scaled_mm`。
 - 如果后续你要换成自己写的 `.cu` / `cpp_extension` 版本，只需要替换对应实现文件，Benchmark 主流程无需重写。
 
 ## 环境准备

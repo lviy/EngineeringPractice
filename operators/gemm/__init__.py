@@ -39,6 +39,23 @@ def _resolve_dtype(dtype_name: str):
     raise RuntimeError(f"Current PyTorch build does not expose dtype '{dtype_name}'.")
 
 
+def _is_fp8_dtype(dtype: torch.dtype) -> bool:
+    return "float8" in str(dtype)
+
+
+def _to_column_major_rhs(tensor: torch.Tensor) -> torch.Tensor:
+    # torch._scaled_mm requires a logical (K, N) rhs with column-major layout.
+    return tensor.t().contiguous().t()
+
+
+def _quantize_to_fp8(tensor: torch.Tensor, dtype: torch.dtype) -> tuple[torch.Tensor, torch.Tensor]:
+    max_pos = torch.finfo(dtype).max
+    max_abs = tensor.abs().max().float().clamp(min=1e-12)
+    scale = (max_abs / max_pos).reshape(1)
+    quantized = (tensor.float() / scale).clamp(min=-max_pos, max=max_pos).to(dtype)
+    return quantized, scale
+
+
 def build_cases(profile: str = "default") -> list[OperatorCase]:
     if profile == "default":
         square_sizes = [1024, 2048, 3072, 4096, 6144, 8192]
@@ -113,22 +130,40 @@ def prepare_inputs(case: OperatorCase, device: str = "cuda") -> dict[str, torch.
     base_a = torch.randn((m, k), device=device, dtype=torch.float16)
     base_b = torch.randn((k, n), device=device, dtype=torch.float16)
 
-    if dtype == torch.float16:
-        a = base_a
-        b = base_b
-        b_is_transposed = False
-    else:
-        a = base_a.to(dtype)
-        b = base_b.transpose(0, 1).contiguous().to(dtype)
-        b_is_transposed = True
-
-    return {
-        "a": a,
-        "b": b,
+    inputs: dict[str, torch.Tensor | str | bool] = {
+        "a_ref": base_a,
+        "b_ref": base_b,
         "input_dtype_name": dtype_name,
-        "b_is_transposed": b_is_transposed,
         "x_label": case.params["x_label"],
     }
+
+    if _is_fp8_dtype(dtype):
+        a_fp8, scale_a = _quantize_to_fp8(base_a, dtype)
+        b_fp8, scale_b = _quantize_to_fp8(base_b, dtype)
+
+        inputs.update(
+            {
+                "a": a_fp8,
+                "b_triton": b_fp8.transpose(0, 1).contiguous(),
+                "b_native": _to_column_major_rhs(b_fp8),
+                "scale_a": scale_a.to(device=device, dtype=torch.float32),
+                "scale_b": scale_b.to(device=device, dtype=torch.float32),
+                "b_is_transposed": True,
+            }
+        )
+    else:
+        inputs.update(
+            {
+                "a": base_a,
+                "b_triton": base_b,
+                "b_native": base_b,
+                "scale_a": torch.ones((1,), device=device, dtype=torch.float32),
+                "scale_b": torch.ones((1,), device=device, dtype=torch.float32),
+                "b_is_transposed": False,
+            }
+        )
+
+    return inputs
 
 
 def get_backends():

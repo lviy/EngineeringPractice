@@ -102,7 +102,7 @@ def run(inputs: dict[str, torch.Tensor]) -> torch.Tensor:
         raise RuntimeError("Triton is not installed.")
 
     a = inputs["a"]
-    b = inputs["b"]
+    b = inputs["b_triton"]
     b_is_transposed = inputs.get("b_is_transposed", False)
     if a.ndim != 2 or b.ndim != 2:
         raise TypeError("GEMM expects 2D inputs.")
@@ -140,4 +140,7 @@ def run(inputs: dict[str, torch.Tensor]) -> torch.Tensor:
         num_warps=num_warps,
         num_stages=num_stages,
     )
+    if _is_fp8_dtype(a.dtype):
+        scaled = c.float() * inputs["scale_a"] * inputs["scale_b"]
+        return scaled.to(torch.float16)
     return c
