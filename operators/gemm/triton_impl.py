@@ -39,10 +39,6 @@ if triton is not None:
         ]
 
 
-    def _select_configs(meta):
-        return _fp8_configs() if meta.get("FP8_OUTPUT", False) else _fp16_configs()
-
-
     @triton.autotune(
         configs=_fp16_configs() + _fp8_configs(),
         key=["m", "n", "k", "FP8_OUTPUT", "B_TRANSPOSED"],
@@ -52,6 +48,8 @@ if triton is not None:
         a_ptr,
         b_ptr,
         c_ptr,
+        scale_a_ptr,
+        scale_b_ptr,
         m,
         n,
         k,
@@ -107,6 +105,11 @@ if triton is not None:
             else:
                 b_ptrs += BLOCK_K * stride_bk
 
+        if FP8_OUTPUT:
+            scale_a = tl.load(scale_a_ptr)
+            scale_b = tl.load(scale_b_ptr)
+            accumulator = accumulator * scale_a * scale_b
+
         c = accumulator.to(tl.float16)
         offs_cm = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
         offs_cn = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
@@ -147,6 +150,8 @@ def run(inputs: dict[str, torch.Tensor]) -> torch.Tensor:
         a,
         b,
         c,
+        inputs["scale_a"],
+        inputs["scale_b"],
         m,
         n,
         k,
@@ -160,7 +165,4 @@ def run(inputs: dict[str, torch.Tensor]) -> torch.Tensor:
         FP8_OUTPUT=fp8_output,
     )
 
-    if fp8_output:
-        scaled = c.float() * inputs["scale_a"] * inputs["scale_b"]
-        return scaled.to(torch.float16)
     return c
