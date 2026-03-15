@@ -30,7 +30,7 @@ Triton 作为一个基于 Python 的 GPU 编程语言与编译器，能够用较
 当前版本已经搭建了一个可直接扩展的项目骨架，重点完成了以下内容：
 
 - 提供 `GEMM` 的 `CUDA` 基线版本与 `Triton` 版本。
-- 提供 `FP16` 与 `FP8` 两种精度下的 `GEMM` Benchmark。
+- 提供 `FP16` 与 `FP8(E4M3)` 两种精度下的 `GEMM` Benchmark。
 - 提供 `Fused MoE` 的研究模板目录，便于后续继续补充实现。
 - 提供统一的 Benchmark 入口，可自动构造多组测试数据。
 - 支持对同一算子的不同实现进行耗时统计、TFLOPS 统计、正确性校验与画图。
@@ -86,7 +86,8 @@ EngineeringPractice/
 说明：
 
 - 这里的 `CUDA` 基线当前通过 PyTorch CUDA Kernel 进行封装，便于快速建立对照组。
-- 对于 `FP8 GEMM`，当前 `CUDA` 基线优先使用 PyTorch 原生的 `torch._scaled_mm` 路径，不再通过回退到 `FP16 matmul` 冒充 `FP8`。
+- 对于 `FP8 GEMM`，当前项目使用 `float8_e4m3fn` 作为前向精度，并优先使用 PyTorch 原生的 `torch._scaled_mm` 路径，不再通过回退到 `FP16 matmul` 冒充 `FP8`。
+- 当前项目不再提供 `e5m2` 前向 GEMM case，避免进入 PyTorch 原生接口不支持的路径。
 - 原生 `FP8 GEMM` 对硬件和软件有要求：通常需要 Hopper 及以上 GPU，且当前 PyTorch 构建需要提供 `_scaled_mm`。
 - 如果后续你要换成自己写的 `.cu` / `cpp_extension` 版本，只需要替换对应实现文件，Benchmark 主流程无需重写。
 

@@ -63,7 +63,7 @@ def build_cases(profile: str = "default") -> list[OperatorCase]:
         attn_token_sizes = [1024, 2048, 4096, 6144]
         cases: list[OperatorCase] = []
 
-        for dtype_name in ("float16", "float8_e5m2"):
+        for dtype_name in ("float16", "float8_e4m3fn"):
             dtype_tag = "fp16" if dtype_name == "float16" else "fp8"
 
             for size in square_sizes:
@@ -113,7 +113,7 @@ def build_cases(profile: str = "default") -> list[OperatorCase]:
     if profile == "smoke":
         return [
             _make_case("gemm_fp16_smoke", 1024, 1024, 1024, "float16", "square", 1024, "Matrix Size (M=N=K)"),
-            _make_case("gemm_fp8_smoke", 2048, 2048, 2048, "float8_e5m2", "square", 2048, "Matrix Size (M=N=K)"),
+            _make_case("gemm_fp8_smoke", 2048, 2048, 2048, "float8_e4m3fn", "square", 2048, "Matrix Size (M=N=K)"),
         ]
 
     raise ValueError(f"Unknown profile for GEMM: {profile}")
