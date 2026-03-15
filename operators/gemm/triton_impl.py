@@ -51,7 +51,9 @@ if triton is not None:
 
         a_ptrs = a_ptr + (offs_am[:, None] * stride_am + offs_k[None, :] * stride_ak)
         if B_TRANSPOSED:
-            b_ptrs = b_ptr + (offs_bn[None, :] * stride_bn + offs_k[:, None] * stride_bk)
+            # FP8 path stores B as a contiguous transposed matrix with logical shape (N, K).
+            # To fetch the original B[K, N] tile, we index B_t[N, K].
+            b_ptrs = b_ptr + (offs_bn[None, :] * stride_bk + offs_k[:, None] * stride_bn)
         else:
             b_ptrs = b_ptr + (offs_k[:, None] * stride_bk + offs_bn[None, :] * stride_bn)
 
@@ -67,7 +69,7 @@ if triton is not None:
             accumulator = tl.dot(a, b, accumulator)
             a_ptrs += BLOCK_K * stride_ak
             if B_TRANSPOSED:
-                b_ptrs += BLOCK_K * stride_bk
+                b_ptrs += BLOCK_K * stride_bn
             else:
                 b_ptrs += BLOCK_K * stride_bk
 
