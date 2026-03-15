@@ -30,9 +30,11 @@ Triton 作为一个基于 Python 的 GPU 编程语言与编译器，能够用较
 当前版本已经搭建了一个可直接扩展的项目骨架，重点完成了以下内容：
 
 - 提供 `GEMM` 的 `CUDA` 基线版本与 `Triton` 版本。
+- 提供 `FP16` 与 `FP8` 两种精度下的 `GEMM` Benchmark。
 - 提供 `Fused MoE` 的研究模板目录，便于后续继续补充实现。
 - 提供统一的 Benchmark 入口，可自动构造多组测试数据。
-- 支持对同一算子的不同实现进行耗时统计、正确性校验与画图。
+- 支持对同一算子的不同实现进行耗时统计、TFLOPS 统计、正确性校验与画图。
+- 默认 `GEMM` Benchmark 会自动构造多组连续 sweep，用于生成更有信息量的性能曲线。
 - Benchmark 输出结果保存在 `output/` 目录中。
 
 ## 项目结构
@@ -70,6 +72,12 @@ EngineeringPractice/
 4. 对不同实现的输出进行误差比对，确认数值结果可接受。
 5. 将统计结果保存为 `csv`，并将性能对比图保存到 `output/` 目录。
 
+当前 `GEMM` 默认会构造三类数据族：
+
+- `square`：方阵尺寸 sweep，观察规模增长后的性能变化。
+- `mlp`：模拟 Transformer/MLP 中常见的 `M x 4096` 与 `4096 x 11008` 乘法。
+- `attn`：模拟注意力模块中较常见的 `4096 x 4096` 投影形态。
+
 当前默认优先演示 `GEMM`：
 
 - `operators/gemm/cuda_impl.py`
@@ -78,6 +86,7 @@ EngineeringPractice/
 说明：
 
 - 这里的 `CUDA` 基线当前通过 PyTorch CUDA Kernel 进行封装，便于快速建立对照组。
+- 对于 `FP8 GEMM`，当前 `CUDA` 基线会将量化后的输入反量化回 `FP16` 后再执行 `torch.matmul`，用于提供统一的参考输出与对照结果。
 - 如果后续你要换成自己写的 `.cu` / `cpp_extension` 版本，只需要替换对应实现文件，Benchmark 主流程无需重写。
 
 ## 环境准备
@@ -111,7 +120,13 @@ python3 benchmarks/run_benchmark.py --operator gemm --plot
 python3 benchmarks/run_benchmark.py --operator gemm --warmup 20 --repeat 100 --plot
 ```
 
-### 3. 运行 Fused MoE 模板
+### 3. 使用轻量级 smoke 配置快速验证
+
+```bash
+python3 benchmarks/run_benchmark.py --operator gemm --profile smoke --warmup 5 --repeat 20 --plot
+```
+
+### 4. 运行 Fused MoE 模板
 
 ```bash
 python3 benchmarks/run_benchmark.py --operator fused_moe --plot
@@ -127,12 +142,14 @@ python3 benchmarks/run_benchmark.py --operator fused_moe --plot
 Benchmark 运行结束后，会在 `output/` 中生成类似文件：
 
 - `gemm_benchmark.csv`
-- `gemm_benchmark.png`
+- `gemm_latency.png`
+- `gemm_tflops.png`
+- `gemm_speedup.png`
 
 其中：
 
-- `csv` 用于记录不同实现、不同 shape 下的耗时与误差。
-- `png` 用于展示性能对比图，便于在课程设计或论文中直接引用。
+- `csv` 用于记录不同实现、不同 shape 下的耗时、TFLOPS、相对 CUDA 的加速比与误差。
+- `png` 用于展示按 `family` 分组的时延、吞吐率与加速比曲线，便于在课程设计或论文中直接引用。
 
 ## 后续建议
 

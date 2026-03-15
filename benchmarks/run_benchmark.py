@@ -9,7 +9,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from benchmarks.common import benchmark_cuda_callable, max_abs_diff, maybe_plot, require_cuda, write_csv
+from benchmarks.common import attach_speedup, benchmark_cuda_callable, compute_tflops, max_abs_diff, plot_metric, require_cuda, write_csv
 
 
 def parse_args() -> argparse.Namespace:
@@ -41,11 +41,20 @@ def main() -> None:
 
     for case in cases:
         print(f"[case] {case.name} | {case.summary}")
-        prepared_inputs = operator_module.prepare_inputs(case, device="cuda")
+        try:
+            prepared_inputs = operator_module.prepare_inputs(case, device="cuda")
+        except Exception as exc:
+            print(f"  - skip case: {exc}")
+            continue
+
         reference_output = None
 
         for backend in backends:
-            available, reason = backend.is_available()
+            try:
+                available, reason = backend.is_available(prepared_inputs)
+            except TypeError:
+                available, reason = backend.is_available()
+
             if not available:
                 print(f"  - skip {backend.BACKEND_NAME}: {reason}")
                 continue
@@ -55,6 +64,7 @@ def main() -> None:
 
             output = runner()
             avg_ms = benchmark_cuda_callable(runner, warmup=args.warmup, repeat=args.repeat)
+            tflops = compute_tflops(case.params["m"], case.params["n"], case.params["k"], avg_ms)
 
             if reference_output is None:
                 diff = 0.0
@@ -66,22 +76,37 @@ def main() -> None:
                 "operator": args.operator,
                 "case_name": case.name,
                 "summary": case.summary,
+                "dtype": prepared_inputs.get("input_dtype_name", "unknown"),
+                "family": case.params.get("family", "default"),
+                "sweep_value": case.params.get("sweep_value", -1),
+                "x_label": case.params.get("x_label", "Sweep Value"),
+                "m": case.params.get("m", -1),
+                "n": case.params.get("n", -1),
+                "k": case.params.get("k", -1),
                 "backend": backend.BACKEND_NAME,
                 "avg_ms": round(avg_ms, 4),
+                "tflops": round(tflops, 4),
                 "max_abs_diff": round(diff, 8),
             }
             rows.append(row)
-            print(f"  - {backend.BACKEND_NAME}: {avg_ms:.4f} ms | max_abs_diff={diff:.8f}")
+            print(f"  - {backend.BACKEND_NAME}: {avg_ms:.4f} ms | {tflops:.4f} TFLOPS | max_abs_diff={diff:.8f}")
 
     output_dir = PROJECT_ROOT / "output"
+    rows = attach_speedup(rows, baseline_backend="cuda")
     csv_path = output_dir / f"{args.operator}_benchmark.csv"
     write_csv(csv_path, rows)
     print(f"[saved] {csv_path}")
 
     if args.plot:
-        plot_path = output_dir / f"{args.operator}_benchmark.png"
-        maybe_plot(plot_path, rows, args.operator)
-        print(f"[saved] {plot_path}")
+        latency_plot_path = output_dir / f"{args.operator}_latency.png"
+        tflops_plot_path = output_dir / f"{args.operator}_tflops.png"
+        speedup_plot_path = output_dir / f"{args.operator}_speedup.png"
+        plot_metric(latency_plot_path, rows, args.operator, metric_key="avg_ms", ylabel="Average Latency (ms)", title="Latency Benchmark")
+        plot_metric(tflops_plot_path, rows, args.operator, metric_key="tflops", ylabel="Throughput (TFLOPS)", title="Throughput Benchmark")
+        plot_metric(speedup_plot_path, rows, args.operator, metric_key="speedup_vs_cuda", ylabel="Speedup vs CUDA", title="Speedup Benchmark")
+        print(f"[saved] {latency_plot_path}")
+        print(f"[saved] {tflops_plot_path}")
+        print(f"[saved] {speedup_plot_path}")
 
 
 if __name__ == "__main__":

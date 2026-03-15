@@ -35,6 +35,35 @@ def max_abs_diff(reference: torch.Tensor, candidate: torch.Tensor) -> float:
     return float((reference - candidate).abs().max().item())
 
 
+def compute_tflops(m: int, n: int, k: int, avg_ms: float) -> float:
+    if avg_ms <= 0:
+        return 0.0
+    flops = 2.0 * m * n * k
+    return flops / (avg_ms * 1e-3) / 1e12
+
+
+def attach_speedup(rows: list[dict[str, Any]], baseline_backend: str = "cuda") -> list[dict[str, Any]]:
+    baseline_map: dict[tuple[str, str], float] = {}
+    for row in rows:
+        key = (str(row["case_name"]), str(row["dtype"]))
+        if row["backend"] == baseline_backend:
+            baseline_map[key] = float(row["avg_ms"])
+
+    enriched_rows: list[dict[str, Any]] = []
+    for row in rows:
+        key = (str(row["case_name"]), str(row["dtype"]))
+        row_copy = dict(row)
+        baseline_ms = baseline_map.get(key)
+        current_ms = float(row["avg_ms"])
+        if baseline_ms is None or current_ms <= 0:
+            row_copy["speedup_vs_cuda"] = ""
+        else:
+            row_copy["speedup_vs_cuda"] = round(baseline_ms / current_ms, 4)
+        enriched_rows.append(row_copy)
+
+    return enriched_rows
+
+
 def write_csv(output_path: Path, rows: list[dict[str, Any]]) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     if not rows:
@@ -47,7 +76,7 @@ def write_csv(output_path: Path, rows: list[dict[str, Any]]) -> None:
         writer.writerows(rows)
 
 
-def maybe_plot(output_path: Path, rows: list[dict[str, Any]], operator_name: str) -> None:
+def plot_metric(output_path: Path, rows: list[dict[str, Any]], operator_name: str, metric_key: str, ylabel: str, title: str) -> None:
     if not rows:
         return
 
@@ -56,26 +85,33 @@ def maybe_plot(output_path: Path, rows: list[dict[str, Any]], operator_name: str
     except ImportError as exc:
         raise RuntimeError("matplotlib is required for plotting. Please install requirements.txt first.") from exc
 
-    case_names = [row["case_name"] for row in rows if row["backend"] == rows[0]["backend"]]
-    backends = sorted({row["backend"] for row in rows})
+    families = list(dict.fromkeys(row.get("family", "default") for row in rows))
+    fig, axes = plt.subplots(len(families), 1, figsize=(12, 4.5 * len(families)), squeeze=False)
 
-    fig, ax = plt.subplots(figsize=(12, 6))
-    x_positions = list(range(len(case_names)))
-    width = 0.8 / max(len(backends), 1)
+    for axis, family in zip(axes.flatten(), families):
+        family_rows = [row for row in rows if row.get("family", "default") == family]
+        series_keys = sorted({(row["backend"], row["dtype"]) for row in family_rows})
+        x_label = next((str(row.get("x_label")) for row in family_rows if row.get("x_label")), "Sweep Value")
 
-    for index, backend in enumerate(backends):
-        backend_rows = [row for row in rows if row["backend"] == backend]
-        backend_times = [row["avg_ms"] for row in backend_rows]
-        bar_positions = [x + index * width for x in x_positions]
-        ax.bar(bar_positions, backend_times, width=width, label=backend)
+        for backend, dtype_name in series_keys:
+            series_rows = [
+                row
+                for row in family_rows
+                if row["backend"] == backend and row["dtype"] == dtype_name and row.get(metric_key, "") != ""
+            ]
+            series_rows.sort(key=lambda row: row.get("sweep_value", 0))
+            x_values = [row.get("sweep_value", 0) for row in series_rows]
+            y_values = [row[metric_key] for row in series_rows]
+            if not x_values:
+                continue
+            axis.plot(x_values, y_values, marker="o", linewidth=2, label=f"{backend}-{dtype_name}")
 
-    center_offset = width * (len(backends) - 1) / 2
-    ax.set_xticks([x + center_offset for x in x_positions])
-    ax.set_xticklabels(case_names, rotation=20, ha="right")
-    ax.set_ylabel("Average Latency (ms)")
-    ax.set_title(f"{operator_name.upper()} Backend Benchmark")
-    ax.legend()
-    ax.grid(axis="y", linestyle="--", alpha=0.3)
+        axis.set_xlabel(x_label)
+        axis.set_ylabel(ylabel)
+        axis.set_title(f"{operator_name.upper()} {title} | {family}")
+        axis.grid(True, linestyle="--", alpha=0.3)
+        axis.legend()
+
     fig.tight_layout()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, dpi=200)
