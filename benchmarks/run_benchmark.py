@@ -13,11 +13,11 @@ from benchmarks.common import attach_speedup, benchmark_cuda_callable, compute_t
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Benchmark CUDA and Triton operator implementations.")
-    parser.add_argument("--operator", required=True, help="Operator name, e.g. gemm or fused_moe.")
+    parser = parser = argparse.ArgumentParser(description="Benchmark CUDA, PyTorch, and Triton operator implementations.")
+    parser.add_argument("--operator", required=True, help="Operator name, e.g. gemm, fused_moe, fused_kv_materialize, or rotate_input_ids.")
     parser.add_argument("--warmup", type=int, default=10, help="Warmup iterations before timing.")
     parser.add_argument("--repeat", type=int, default=50, help="Benchmark repetitions.")
-    parser.add_argument("--profile", default="default", help="Benchmark case profile.")
+    parser.add_argument("--profile", default="default", help="Benchmark case profile (default, regular, irregular, smoke).")
     parser.add_argument("--plot", action="store_true", help="Save a comparison plot into output/.")
     return parser.parse_args()
 
@@ -62,15 +62,37 @@ def main() -> None:
             def runner():
                 return backend.run(prepared_inputs)
 
-            output = runner()
-            avg_ms = benchmark_cuda_callable(runner, warmup=args.warmup, repeat=args.repeat)
-            tflops = compute_tflops(case.params["m"], case.params["n"], case.params["k"], avg_ms)
+            try:
+                output = runner()
+                avg_ms = benchmark_cuda_callable(runner, warmup=args.warmup, repeat=args.repeat)
+            except Exception as exc:
+                print(f"  - error {backend.BACKEND_NAME}: {exc}")
+                continue
 
+            # Compute TFLOPS for GEMM-like operators
+            m, n, k = case.params.get("m", 0), case.params.get("n", 0), case.params.get("k", 0)
+            if m and n and k:
+                tflops = compute_tflops(m, n, k, avg_ms)
+            else:
+                tflops = 0.0
+
+            # Compute correctness difference
             if reference_output is None:
                 diff = 0.0
                 reference_output = output
             else:
-                diff = max_abs_diff(reference_output, output)
+                if isinstance(output, tuple):
+                    # Handle tuple outputs (like k_out, v_out)
+                    if isinstance(reference_output, tuple):
+                        diffs = [
+                            max_abs_diff(ref, out)
+                            for ref, out in zip(reference_output, output)
+                        ]
+                        diff = max(diffs)
+                    else:
+                        diff = max_abs_diff(reference_output, output[0])
+                else:
+                    diff = max_abs_diff(reference_output, output)
 
             row = {
                 "operator": args.operator,
@@ -80,9 +102,9 @@ def main() -> None:
                 "family": case.params.get("family", "default"),
                 "sweep_value": case.params.get("sweep_value", -1),
                 "x_label": case.params.get("x_label", "Sweep Value"),
-                "m": case.params.get("m", -1),
-                "n": case.params.get("n", -1),
-                "k": case.params.get("k", -1),
+                "m": m,
+                "n": n,
+                "k": k,
                 "backend": backend.BACKEND_NAME,
                 "avg_ms": round(avg_ms, 4),
                 "tflops": round(tflops, 4),
