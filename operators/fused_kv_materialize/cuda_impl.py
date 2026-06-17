@@ -197,7 +197,6 @@ def load_cuda_extension():
     return cpp_extension.load(
         name="fused_kv_materialize_cuda",
         sources=[],
-        extra_cxx_flags=["-O3"],
         extra_cuda_cflags=["-O3", "--use_fast_math"],
         source_code=CUDA_KERNEL_SOURCE,
         is_python_module=True,

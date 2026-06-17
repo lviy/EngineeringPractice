@@ -107,19 +107,19 @@ def run(inputs: dict) -> tuple[torch.Tensor, torch.Tensor]:
     # Split KV into K and V
     # kv shape: [total_ctx, kv_size * 2]
     # K: first kv_size elements, V: second kv_size elements
-    kv_reshaped = kv.view(total_ctx, 2, num_kv_heads, head_dim)
+    kv_reshaped = kv.reshape(total_ctx, 2, num_kv_heads, head_dim)
     k_raw = kv_reshaped[:, 0, :, :]  # [total_ctx, num_kv_heads, head_dim]
     v_raw = kv_reshaped[:, 1, :, :]  # [total_ctx, num_kv_heads, head_dim]
 
     # Reshape for per-head processing
-    k_flat = k_raw.view(-1, head_dim)  # [total_ctx * num_kv_heads, head_dim]
+    k_flat = k_raw.reshape(-1, head_dim)  # [total_ctx * num_kv_heads, head_dim]
 
     # Apply RMSNorm
     k_normed = rms_norm(k_flat.float(), k_norm_weight.float(), eps)
     k_normed = k_normed.to(kv.dtype)
 
     # Reshape back
-    k_normed = k_normed.view(total_ctx, num_kv_heads, head_dim)
+    k_normed = k_normed.reshape(total_ctx, num_kv_heads, head_dim)
 
     # Apply RoPE
     # Get cos/sin for each position
