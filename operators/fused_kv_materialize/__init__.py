@@ -187,7 +187,13 @@ def prepare_inputs(case: OperatorCase, device: str = "cuda") -> dict:
 
     # Cos/sin cache for RoPE: [max_pos, rotary_dim]
     # Precomputed cos/sin values for all possible positions
-    max_pos = total_ctx + 100  # Add buffer
+    # For mixed_padding mode, calculate required buffer based on padding_ratio
+    if case.params.get("irregular_mode") == "mixed_padding":
+        padding_ratio = case.params.get("padding_ratio", 0.3)
+        num_gaps = int(total_ctx * padding_ratio / 10)
+        max_pos = total_ctx + num_gaps * 5 + 100
+    else:
+        max_pos = total_ctx + 100  # Add buffer
     cos_sin_cache = torch.randn((max_pos, rotary_dim), device=device, dtype=dtype)
 
     # Positions: [total_ctx]
