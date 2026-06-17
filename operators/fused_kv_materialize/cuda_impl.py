@@ -194,12 +194,11 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
 
 def load_cuda_extension():
     """Load or compile the CUDA extension."""
-    return cpp_extension.load(
+    return cpp_extension.load_inline(
         name="fused_kv_materialize_cuda",
-        sources=[],
+        cpp_sources=[],
+        cuda_sources=[CUDA_KERNEL_SOURCE],
         extra_cuda_cflags=["-O3", "--use_fast_math"],
-        source_code=CUDA_KERNEL_SOURCE,
-        is_python_module=True,
     )
 
 
